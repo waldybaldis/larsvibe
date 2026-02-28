@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LarsVibe Arcade</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      background: #0a0a1a;
+      color: #e0e0ff;
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow-x: hidden;
+    }
+
+    /* animated background grid */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(0,255,200,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,255,200,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      animation: gridScroll 20s linear infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    @keyframes gridScroll {
+      to { transform: translateY(40px); }
+    }
+
+    /* scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,.08) 2px,
+        rgba(0,0,0,.08) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px 60px;
+    }
+
+    /* header */
+    .header {
+      text-align: center;
+      margin-bottom: 50px;
+    }
+
+    .title {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(24px, 5vw, 42px);
+      background: linear-gradient(135deg, #00ffc8, #7b61ff, #ff6bb5, #00ffc8);
+      background-size: 300% 300%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradientShift 4s ease infinite;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    @keyframes gradientShift {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: rgba(255,255,255,.4);
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    .game-count {
+      display: inline-block;
+      margin-top: 16px;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      color: #00ffc8;
+      border: 1px solid rgba(0,255,200,.3);
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(0,255,200,.05);
+    }
+
+    /* game grid */
+    .games {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .game-card {
+      position: relative;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 28px 24px;
+      cursor: pointer;
+      transition: all .25s ease;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .game-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 16px;
+      background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,.06), transparent 60%);
+      opacity: 0;
+      transition: opacity .3s;
+      pointer-events: none;
+    }
+
+    .game-card:hover::before { opacity: 1; }
+
+    .game-card:hover {
+      border-color: var(--accent, #7b61ff);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,.4), 0 0 20px color-mix(in srgb, var(--accent, #7b61ff) 20%, transparent);
+    }
+
+    .game-icon {
+      font-size: 36px;
+      width: 56px;
+      height: 56px;
+      display: grid;
+      place-items: center;
+      background: rgba(255,255,255,.05);
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.06);
+    }
+
+    .game-name {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #fff;
+    }
+
+    .game-desc {
+      font-size: 13px;
+      line-height: 1.5;
+      color: rgba(255,255,255,.5);
+    }
+
+    .game-tag {
+      display: inline-block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--accent, #7b61ff) 15%, transparent);
+      color: var(--accent, #7b61ff);
+      border: 1px solid color-mix(in srgb, var(--accent, #7b61ff) 25%, transparent);
+      align-self: flex-start;
+    }
+
+    .play-hint {
+      margin-top: auto;
+      padding-top: 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,.25);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color .25s;
+    }
+
+    .game-card:hover .play-hint {
+      color: var(--accent, #7b61ff);
+    }
+
+    .play-hint::before {
+      content: '';
+      width: 0;
+      height: 0;
+      border-left: 8px solid currentColor;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    /* footer */
+    .footer {
+      text-align: center;
+      margin-top: 60px;
+      font-size: 12px;
+      color: rgba(255,255,255,.2);
+    }
+
+    /* mobile */
+    @media (max-width: 600px) {
+      .games { grid-template-columns: 1fr; }
+      .container { padding: 24px 16px 40px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header class="header">
+    <h1 class="title">LarsVibe<br>Arcade</h1>
+    <p class="subtitle">select your game</p>
+    <span class="game-count" id="count"></span>
+  </header>
+
+  <div class="games" id="games"></div>
+
+  <footer class="footer">LarsVibe Arcade &mdash; built for fun</footer>
+</div>
+
+<script>
+  // ─── GAME REGISTRY ────────────────────────────────────────
+  // To add a new game, just add an entry here:
+  const GAMES = [
+    {
+      name:  "Snake.io",
+      desc:  "Grow your snake, dodge bots, survive the arena",
+      file:  "games/snake-io-bots-kill-player.html",
+      icon:  "\u{1F40D}",
+      tag:   "Singleplayer",
+      accent:"#00ffc8"
+    },
+    {
+      name:  "Pong 2P",
+      desc:  "Classic pong with abilities, VFX & rainbow rush",
+      file:  "games/pong-2p-abilities-v5-custom-song-sfx.html",
+      icon:  "\u{1F3D3}",
+      tag:   "2 Players",
+      accent:"#7b61ff"
+    },
+    {
+      name:  "Mini Dash",
+      desc:  "Side-scrolling dash through obstacles",
+      file:  "games/jules-dash-obstacles-fixed.html",
+      icon:  "\u{1F3C3}",
+      tag:   "Singleplayer",
+      accent:"#ff6bb5"
+    },
+    {
+      name:  "Mini Dash 2",
+      desc:  "More obstacles, more chaos",
+      file:  "games/jules-dash-obstacles-fixed-1.html",
+      icon:  "\u{26A1}",
+      tag:   "Singleplayer",
+      accent:"#ffb347"
+    },
+    {
+      name:  "Stickman Runner",
+      desc:  "Run, earn coins, unlock upgrades in the shop",
+      file:  "games/stickman_runner_shop.html",
+      icon:  "\u{1F6CD}\uFE0F",
+      tag:   "Singleplayer",
+      accent:"#4fc3f7"
+    },
+    {
+      name:  "Verdwaald",
+      desc:  "Find your way out of a realistic maze",
+      file:  "games/verdwaald_realistisch.html",
+      icon:  "\u{1F573}\uFE0F",
+      tag:   "Puzzle",
+      accent:"#a5d6a7"
+    }
+  ];
+
+  // ─── RENDER ───────────────────────────────────────────────
+  const grid = document.getElementById("games");
+  document.getElementById("count").textContent = GAMES.length + " GAMES LOADED";
+
+  GAMES.forEach(g => {
+    const a = document.createElement("a");
+    a.href = g.file;
+    a.className = "game-card";
+    a.style.setProperty("--accent", g.accent);
+    a.innerHTML = `
+      <div class="game-icon">${g.icon}</div>
+      <div class="game-name">${g.name}</div>
+      <div class="game-desc">${g.desc}</div>
+      <span class="game-tag">${g.tag}</span>
+      <div class="play-hint">Play now</div>
+    `;
+    grid.appendChild(a);
+  });
+
+  // spotlight follow cursor on cards
+  document.addEventListener("mousemove", e => {
+    document.querySelectorAll(".game-card").forEach(card => {
+      const r = card.getBoundingClientRect();
+      card.style.setProperty("--mx", ((e.clientX - r.left) / r.width * 100) + "%");
+      card.style.setProperty("--my", ((e.clientY - r.top) / r.height * 100) + "%");
+    });
+  });
+</script>
+
+</body>
+</html>
