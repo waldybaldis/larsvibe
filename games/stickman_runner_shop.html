@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stickman Runner + Shop</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body{
+      display:flex; align-items:center; justify-content:center;
+      background:#f3f3f3;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+    .wrap{ width:min(920px, 96vw); position:relative; }
+    .hud{
+      display:flex; flex-wrap:wrap; justify-content:space-between;
+      gap:12px; margin-bottom:10px;
+    }
+    .pill{
+      background:#fff; border-radius:999px; padding:8px 12px;
+      box-shadow:0 8px 22px rgba(0,0,0,.08);
+      white-space:nowrap; display:flex; gap:8px; align-items:center;
+    }
+    .btn{
+      border:0; cursor:pointer; border-radius:999px; padding:8px 12px;
+      box-shadow:0 8px 22px rgba(0,0,0,.08);
+      background:#fff;
+      font-weight:600;
+    }
+    .btn:active{ transform: translateY(1px); }
+    canvas{
+      width:100%;
+      background:#fff;
+      border-radius:18px;
+      box-shadow:0 14px 40px rgba(0,0,0,.10);
+      touch-action: manipulation;
+      display:block;
+    }
+    .help{ margin-top:10px; opacity:.75; font-size:14px; text-align:center; }
+    kbd{ background:#fff; border:1px solid #ddd; border-bottom-width:2px; padding:2px 6px; border-radius:6px; }
+
+    /* Shop overlay */
+    .overlay{
+      position:absolute; inset:52px 0 0 0;
+      display:none;
+      align-items:center; justify-content:center;
+      padding:14px;
+    }
+    .overlay.show{ display:flex; }
+    .backdrop{
+      position:absolute; inset:0;
+      background:rgba(0,0,0,.55);
+      border-radius:18px;
+    }
+    .shop{
+      position:relative;
+      width:min(760px, 96vw);
+      background:#fff;
+      border-radius:18px;
+      box-shadow:0 18px 70px rgba(0,0,0,.22);
+      padding:16px;
+    }
+    .shop h2{ margin:6px 0 10px 0; }
+    .shop-top{ display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap:12px;
+      margin-top:12px;
+    }
+    @media (max-width: 720px){ .grid{ grid-template-columns: repeat(2, minmax(0,1fr)); } }
+    .card{
+      border:1px solid #ececec;
+      border-radius:14px;
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      min-height:140px;
+    }
+    .card .name{ font-weight:800; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+    .small{ font-size:13px; opacity:.75; }
+    .buy{
+      border:0; cursor:pointer;
+      border-radius:12px; padding:8px 10px;
+      font-weight:700;
+      background:#f3f3f3;
+    }
+    .buy[disabled]{ opacity:.55; cursor:not-allowed; }
+    .tag{
+      display:inline-flex; align-items:center; gap:6px;
+      background:#f6f6f6; border-radius:999px; padding:5px 10px;
+      font-weight:700; font-size:13px;
+    }
+    .coinDot{
+      width:10px; height:10px; border-radius:999px; display:inline-block;
+      background:#d4af37; border:1px solid #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div class="pill">Score: <b id="score">0</b></div>
+      <div class="pill"><span class="coinDot"></span> Coins: <b id="coins">0</b></div>
+      <div class="pill" id="status">Spring: Spatie/↑/tik • Shop: S</div>
+      <div class="pill">Skin: <b id="skinName">Classic</b></div>
+      <button class="btn" id="shopBtn" title="Open shop (S)">Shop</button>
+      <div class="pill">High: <b id="high">0</b></div>
+    </div>
+
+    <canvas id="c" width="920" height="280" aria-label="stickman runner"></canvas>
+
+    <div class="overlay" id="overlay" aria-hidden="true">
+      <div class="backdrop" id="backdrop"></div>
+      <div class="shop" role="dialog" aria-modal="true" aria-label="Shop">
+        <div class="shop-top">
+          <div>
+            <h2>Stickman Shop</h2>
+            <div class="small">Koop nieuwe stokmannetjes met coins. Open/sluit met <kbd>S</kbd>.</div>
+          </div>
+          <div class="row">
+            <span class="tag"><span class="coinDot"></span> <span>Coins: <b id="shopCoins">0</b></span></span>
+            <button class="btn" id="closeShop">Sluiten</button>
+          </div>
+        </div>
+
+        <div class="grid" id="items"></div>
+
+        <div class="small" style="margin-top:12px;">
+          Tip: coins verzamelen = shop-geld. Score blijft je afstand/overleving.
+        </div>
+      </div>
+    </div>
+
+    <div class="help">
+      Spring met <kbd>Spatie</kbd> / <kbd>↑</kbd> / klik / tap – herstart met <kbd>R</kbd> – shop met <kbd>S</kbd>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const scoreEl   = document.getElementById("score");
+  const coinsEl   = document.getElementById("coins");
+  const highEl    = document.getElementById("high");
+  const statusEl  = document.getElementById("status");
+  const skinNameEl= document.getElementById("skinName");
+
+  const shopBtn   = document.getElementById("shopBtn");
+  const overlay   = document.getElementById("overlay");
+  const backdrop  = document.getElementById("backdrop");
+  const closeShop = document.getElementById("closeShop");
+  const itemsEl   = document.getElementById("items");
+  const shopCoinsEl = document.getElementById("shopCoins");
+
+  // ======= Config =======
+  const groundY   = 220;
+  const gravity   = 2400;
+  const jumpV     = 820;
+  const baseSpeed = 360;
+
+  const obstacleChance = 0.020;
+  const coinChance     = 0.020;
+
+  // ======= Shop / Skins =======
+  // Each skin changes stickman styling (stroke color + accessory)
+  const SKINS = [
+    { id:"classic",  name:"Classic",  price:0,   stroke:"#111", accessory:"none" },
+    { id:"bluecap",  name:"Blue Cap", price:20,  stroke:"#111", accessory:"cap",  accent:"#2d6cdf" },
+    { id:"ninja",    name:"Ninja",    price:35,  stroke:"#111", accessory:"mask", accent:"#111" },
+    { id:"gold",     name:"Gold",     price:50,  stroke:"#111", accessory:"glow", accent:"#d4af37" },
+    { id:"leafy",    name:"Leafy",    price:25,  stroke:"#111", accessory:"leaf", accent:"#2aa04b" },
+    { id:"punk",     name:"Punk",     price:40,  stroke:"#111", accessory:"mohawk", accent:"#b400ff" },
+  ];
+
+  function loadJSON(key, fallback){
+    try{
+      const raw = localStorage.getItem(key);
+      if(!raw) return fallback;
+      return JSON.parse(raw);
+    }catch{ return fallback; }
+  }
+  function saveJSON(key, value){
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  let owned = new Set(loadJSON("runner_owned_skins", ["classic"]));
+  let currentSkinId = localStorage.getItem("runner_skin") || "classic";
+  if(!owned.has("classic")) owned.add("classic");
+  if(!owned.has(currentSkinId)) currentSkinId = "classic";
+
+  function currentSkin(){
+    return SKINS.find(s => s.id === currentSkinId) || SKINS[0];
+  }
+
+  function updateSkinUI(){
+    skinNameEl.textContent = currentSkin().name;
+  }
+
+  function renderShop(){
+    itemsEl.innerHTML = "";
+    for(const s of SKINS){
+      const isOwned = owned.has(s.id);
+      const isActive = (s.id === currentSkinId);
+      const canBuy = (!isOwned && walletCoins >= s.price);
+
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="row">
+          <div class="name">${s.name}</div>
+          <div class="tag"><span class="coinDot"></span> ${s.price}</div>
+        </div>
+        <div class="small">${shopDescription(s)}</div>
+        <div class="row">
+          <button class="buy" ${isActive ? "disabled" : ""} data-action="use" data-id="${s.id}">
+            ${isActive ? "Actief" : (isOwned ? "Gebruik" : "Koop")}
+          </button>
+          <span class="small">${isOwned ? "In je kast" : (canBuy ? "Je kan dit kopen" : "Niet genoeg coins")}</span>
+        </div>
+      `;
+      itemsEl.appendChild(card);
+
+      const btn = card.querySelector("button.buy");
+      btn.addEventListener("click", () => {
+        if(isActive) return;
+        if(!owned.has(s.id)){
+          if(walletCoins < s.price) return;
+          walletCoins -= s.price;
+          owned.add(s.id);
+          saveJSON("runner_owned_skins", Array.from(owned));
+          setWallet(walletCoins);
+        }
+        currentSkinId = s.id;
+        localStorage.setItem("runner_skin", currentSkinId);
+        updateSkinUI();
+        renderShop();
+      });
+    }
+  }
+
+  function shopDescription(s){
+    switch(s.accessory){
+      case "cap": return "Stokmannetje met petje.";
+      case "mask": return "Stil. Snel. Ninja vibe.";
+      case "glow": return "Een beetje shiny (goud).";
+      case "leaf": return "Groen blaadje op z’n hoofd.";
+      case "mohawk": return "Punk kuif. Niet subtiel.";
+      default: return "De klassieke stokman.";
+    }
+  }
+
+  // ======= Wallet (coins as currency) =======
+  let walletCoins = Number(localStorage.getItem("runner_wallet") || 0);
+
+  function setWallet(n){
+    walletCoins = Math.max(0, Math.floor(n));
+    localStorage.setItem("runner_wallet", String(walletCoins));
+    coinsEl.textContent = walletCoins;
+    shopCoinsEl.textContent = walletCoins;
+  }
+
+  // ======= Game State =======
+  let speed = baseSpeed;
+  let score = 0;
+  let running = true;
+  let lastTime = performance.now();
+
+  let high = Number(localStorage.getItem("runner_high") || 0);
+  highEl.textContent = high;
+
+  const player = {
+    x:120, y:groundY,
+    // stickman "hitbox" size (rect around body)
+    w:36, h:62,
+    vy:0, onGround:true
+  };
+
+  let obstacles = [];
+  let coins = [];
+
+  // ======= Helpers =======
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  function reset(){
+    score = 0;
+    speed = baseSpeed;
+    obstacles = [];
+    coins = [];
+
+    player.y = groundY;
+    player.vy = 0;
+    player.onGround = true;
+
+    running = true;
+    statusEl.textContent = "Go!";
+    scoreEl.textContent = score;
+  }
+
+  function gameOver(){
+    running = false;
+    statusEl.textContent = "Game over – druk R of tik om opnieuw te starten";
+    if(score > high){
+      high = score;
+      localStorage.setItem("runner_high", String(high));
+      highEl.textContent = high;
+    }
+  }
+
+  function jump(){
+    if(isShopOpen()) return; // don't jump while shopping
+    if(!running){ reset(); return; }
+    if(player.onGround){
+      player.vy = -jumpV;
+      player.onGround = false;
+    }
+  }
+
+  function spawnObstacle(){
+    obstacles.push({
+      x: canvas.width + 10,
+      y: groundY,
+      w: 22 + Math.random()*16,
+      h: 32 + Math.random()*40
+    });
+  }
+
+  function spawnCoin(){
+    coins.push({
+      x: canvas.width + 10,
+      y: groundY - (70 + Math.random()*95),
+      r: 9
+    });
+  }
+
+  function openShop(){
+    overlay.classList.add("show");
+    overlay.setAttribute("aria-hidden", "false");
+    statusEl.textContent = "Shop open — spring is uit";
+    shopCoinsEl.textContent = walletCoins;
+    renderShop();
+  }
+
+  function closeShopUI(){
+    overlay.classList.remove("show");
+    overlay.setAttribute("aria-hidden", "true");
+    statusEl.textContent = running ? "Go!" : "Game over – druk R of tik om opnieuw te starten";
+  }
+
+  function isShopOpen(){
+    return overlay.classList.contains("show");
+  }
+
+  function toggleShop(){
+    if(isShopOpen()) closeShopUI();
+    else openShop();
+  }
+
+  // ======= Drawing =======
+  function drawGround(){
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, groundY + 2);
+    ctx.lineTo(canvas.width, groundY + 2);
+    ctx.stroke();
+
+    // little moving dashes
+    ctx.strokeStyle = "rgba(0,0,0,.25)";
+    ctx.lineWidth = 2;
+    for(let x = -((performance.now()/12) % 44); x < canvas.width; x += 44){
+      ctx.beginPath();
+      ctx.moveTo(x, groundY + 18);
+      ctx.lineTo(x + 20, groundY + 18);
+      ctx.stroke();
+    }
+  }
+
+  function drawObstacle(o){
+    ctx.fillStyle = "#111";
+    // rounded-ish obstacle
+    roundRect(o.x, o.y - o.h, o.w, o.h, 8);
+    ctx.fill();
+  }
+
+  function roundRect(x, y, w, h, r){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  function drawCoin(c){
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+    ctx.fillStyle = "#d4af37";
+    ctx.fill();
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(c.x - 3, c.y - 3, 2, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,255,255,.8)";
+    ctx.fill();
+  }
+
+  function drawStickman(){
+    const skin = currentSkin();
+    const px = player.x;
+    const py = player.y;
+
+    // anchor points
+    const headR = 11;
+    const headX = px + player.w/2;
+    const headY = py - player.h + 16;
+
+    const neckY = headY + headR + 2;
+    const bodyTopY = neckY + 2;
+    const bodyBottomY = py - 10;
+
+    const armY = bodyTopY + 12;
+    const hipY = bodyBottomY;
+
+    const step = (running && player.onGround) ? Math.sin(performance.now()/85) : 0;
+    const legSwing = step * 10;
+    const armSwing = step * 10;
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = skin.stroke;
+    ctx.lineWidth = 4;
+
+    // optional glow (gold skin)
+    if(skin.accessory === "glow"){
+      ctx.save();
+      ctx.shadowColor = skin.accent || "#d4af37";
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 4;
+      // We'll draw twice: shadow pass then normal
+      drawStickmanLines(headX, headY, headR, neckY, bodyTopY, bodyBottomY, armY, hipY, armSwing, legSwing);
+      ctx.restore();
+    }
+
+    // normal pass
+    drawStickmanLines(headX, headY, headR, neckY, bodyTopY, bodyBottomY, armY, hipY, armSwing, legSwing);
+
+    // accessories
+    if(skin.accessory === "cap"){
+      ctx.fillStyle = skin.accent || "#2d6cdf";
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 2;
+      // cap top
+      ctx.beginPath();
+      ctx.arc(headX, headY - 2, headR + 2, Math.PI*1.05, Math.PI*1.95);
+      ctx.fill();
+      ctx.stroke();
+      // brim
+      ctx.beginPath();
+      ctx.ellipse(headX + 8, headY + 4, 10, 4, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+    } else if(skin.accessory === "mask"){
+      ctx.fillStyle = "#111";
+      ctx.beginPath();
+      ctx.roundRect(headX - headR - 2, headY + 1, (headR*2)+4, 10, 5);
+      ctx.fill();
+      // eyes
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(headX - 5, headY + 6, 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(headX + 5, headY + 6, 2, 0, Math.PI*2); ctx.fill();
+    } else if(skin.accessory === "leaf"){
+      ctx.fillStyle = skin.accent || "#2aa04b";
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(headX - 6, headY - 14, 10, 6, -0.5, 0, Math.PI*2);
+      ctx.fill(); ctx.stroke();
+      // stem
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(headX - 1, headY - 12);
+      ctx.lineTo(headX + 3, headY - 20);
+      ctx.stroke();
+    } else if(skin.accessory === "mohawk"){
+      ctx.fillStyle = skin.accent || "#b400ff";
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(headX - 6, headY - 18);
+      ctx.lineTo(headX - 1, headY - 30);
+      ctx.lineTo(headX + 4, headY - 18);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+  }
+
+  function drawStickmanLines(headX, headY, headR, neckY, bodyTopY, bodyBottomY, armY, hipY, armSwing, legSwing){
+    // head
+    ctx.beginPath();
+    ctx.arc(headX, headY, headR, 0, Math.PI*2);
+    ctx.stroke();
+
+    // body
+    ctx.beginPath();
+    ctx.moveTo(headX, neckY);
+    ctx.lineTo(headX, bodyBottomY);
+    ctx.stroke();
+
+    // arms
+    ctx.beginPath();
+    ctx.moveTo(headX, armY);
+    ctx.lineTo(headX - 18 - armSwing, armY + 10);
+    ctx.moveTo(headX, armY);
+    ctx.lineTo(headX + 18 + armSwing, armY + 10);
+    ctx.stroke();
+
+    // legs
+    ctx.beginPath();
+    ctx.moveTo(headX, hipY);
+    ctx.lineTo(headX - 14 - legSwing, hipY + 18);
+    ctx.moveTo(headX, hipY);
+    ctx.lineTo(headX + 14 + legSwing, hipY + 18);
+    ctx.stroke();
+  }
+
+  // ======= Collision =======
+  function hitObstacle(o){
+    // Use player's rectangular hitbox
+    const p = { x: player.x, y: player.y, w: player.w, h: player.h };
+    return (
+      p.x < o.x + o.w &&
+      p.x + p.w > o.x &&
+      (p.y) > (o.y - o.h) &&
+      (p.y - p.h) < o.y
+    );
+  }
+
+  function collectCoins(){
+    // circle vs rect collision
+    coins = coins.filter(c => {
+      const rectLeft = player.x;
+      const rectRight = player.x + player.w;
+      const rectTop = player.y - player.h;
+      const rectBottom = player.y;
+
+      const closestX = clamp(c.x, rectLeft, rectRight);
+      const closestY = clamp(c.y, rectTop, rectBottom);
+
+      const dx = c.x - closestX;
+      const dy = c.y - closestY;
+
+      const hit = (dx*dx + dy*dy) < (c.r*c.r);
+      if(hit){
+        setWallet(walletCoins + 1);   // +1 coin currency
+        score += 10;                 // bonus score
+        scoreEl.textContent = score;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // ======= Main Loop =======
+  function loop(now){
+    const dt = Math.min(0.033, (now - lastTime) / 1000);
+    lastTime = now;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // update
+    if(running && !isShopOpen()){
+      speed += 22 * dt;
+
+      score += 1;
+      scoreEl.textContent = score;
+
+      player.vy += gravity * dt;
+      player.y += player.vy * dt;
+
+      if(player.y >= groundY){
+        player.y = groundY;
+        player.vy = 0;
+        player.onGround = true;
+      }
+
+      if(Math.random() < obstacleChance) spawnObstacle();
+      if(Math.random() < coinChance) spawnCoin();
+
+      obstacles.forEach(o => o.x -= speed * dt);
+      coins.forEach(c => c.x -= speed * dt);
+
+      obstacles = obstacles.filter(o => o.x + o.w > -40);
+      coins = coins.filter(c => c.x + c.r > -40);
+
+      for(const o of obstacles){
+        if(hitObstacle(o)){ gameOver(); break; }
+      }
+      if(running) collectCoins();
+    }
+
+    // draw
+    drawGround();
+
+    // coins behind player
+    for(const c of coins) drawCoin(c);
+
+    // player (stickman)
+    drawStickman();
+
+    // obstacles in front
+    for(const o of obstacles) drawObstacle(o);
+
+    // overlay when dead
+    if(!running){
+      ctx.fillStyle = "rgba(0,0,0,.5)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "center";
+      ctx.font = "700 28px system-ui, sans-serif";
+      ctx.fillText("Game Over", canvas.width/2, 120);
+      ctx.font = "500 16px system-ui, sans-serif";
+      ctx.fillText("Tik/click of druk R om opnieuw te starten", canvas.width/2, 152);
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  // ======= Input =======
+  window.addEventListener("keydown", e => {
+    if(e.code === "Space" || e.code === "ArrowUp"){ e.preventDefault(); jump(); }
+    if(e.code === "KeyR"){ e.preventDefault(); if(isShopOpen()) closeShopUI(); reset(); }
+    if(e.code === "KeyS"){ e.preventDefault(); toggleShop(); }
+    if(e.code === "Escape"){ if(isShopOpen()) closeShopUI(); }
+  });
+
+  canvas.addEventListener("pointerdown", e => { e.preventDefault(); jump(); });
+
+  shopBtn.addEventListener("click", () => toggleShop());
+  closeShop.addEventListener("click", () => closeShopUI());
+  backdrop.addEventListener("click", () => closeShopUI());
+
+  // ======= Init =======
+  setWallet(walletCoins);
+  updateSkinUI();
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

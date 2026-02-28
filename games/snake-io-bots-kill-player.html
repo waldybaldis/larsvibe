@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snake.io – Bots Kill Player</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0f14;overflow:hidden;font-family:system-ui}
+canvas{display:block}
+.hud{position:fixed;top:12px;left:12px;color:#fff;background:rgba(0,0,0,.4);padding:10px;border-radius:10px;font-size:14px}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+<div class="hud">Jij ↔ bots: hoofd raakt lichaam = dood</div>
+
+<script>
+const canvas=document.getElementById("c"),ctx=canvas.getContext("2d");
+function resize(){const d=window.devicePixelRatio||1;canvas.width=innerWidth*d;canvas.height=innerHeight*d;canvas.style.width=innerWidth+"px";canvas.style.height=innerHeight+"px";ctx.setTransform(d,0,0,d,0,0)}
+addEventListener("resize",resize);resize();
+
+const world={w:2600,h:1600};
+const rand=(a,b)=>a+Math.random()*(b-a);
+const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+
+// player
+const snake={x:world.w/2,y:world.h/2,vx:0,vy:0,speed:150,radius:10,body:[],length:140,color:"#6ee7ff"};
+let trailLen=0;
+
+// food
+const foods=[];
+for(let i=0;i<400;i++)foods.push({x:rand(40,world.w-40),y:rand(40,world.h-40),r:rand(2.5,5)});
+
+// bots
+const bots=[...Array(4)].map(()=>({x:rand(200,world.w-200),y:rand(200,world.h-200),vx:0,vy:0,speed:110,radius:9,body:[],length:120,color:"#ff6b6b",target:null}));
+
+function addTrail(s){
+ const last=s.body[s.body.length-1];
+ if(last){const d=dist(s.x,s.y,last.x,last.y);if(d<2)return;trailLen+=d}
+ s.body.push({x:s.x,y:s.y});
+ while(trailLen>s.length&&s.body.length>2){
+  const a=s.body[0],b=s.body[1];
+  trailLen-=dist(a.x,a.y,b.x,b.y);
+  s.body.shift();
+ }
+}
+
+function addBotTrail(bot){
+ const last=bot.body[bot.body.length-1];
+ if(last&&dist(bot.x,bot.y,last.x,last.y)<2)return;
+ bot.body.push({x:bot.x,y:bot.y});
+ while(bot.body.length>bot.length/4)bot.body.shift();
+}
+
+function updateBot(bot,dt){
+ if(!bot.target||!foods.includes(bot.target)){
+  bot.target=foods[Math.floor(Math.random()*foods.length)];
+ }
+ const dx=bot.target.x-bot.x,dy=bot.target.y-bot.y,d=Math.hypot(dx,dy)||1;
+ bot.vx=(dx/d)*bot.speed;
+ bot.vy=(dy/d)*bot.speed;
+ bot.x+=bot.vx*dt;bot.y+=bot.vy*dt;
+ addBotTrail(bot);
+}
+
+function headHitsBody(hx,hy,hr,body,br){
+ for(let i=6;i<body.length-1;i++){
+  const a=body[i],b=body[i+1];
+  const abx=b.x-a.x,aby=b.y-a.y;
+  const apx=hx-a.x,apy=hy-a.y;
+  const t=Math.max(0,Math.min(1,(apx*abx+apy*aby)/(abx*abx+aby*aby||1)));
+  const cx=a.x+t*abx,cy=a.y+t*aby;
+  if(dist(hx,hy,cx,cy)<hr+br) return true;
+ }
+ return false;
+}
+
+function killBot(bot){
+ for(const p of bot.body){
+  foods.push({x:p.x+rand(-4,4),y:p.y+rand(-4,4),r:3});
+ }
+ bot.x=rand(200,world.w-200);
+ bot.y=rand(200,world.h-200);
+ bot.body=[];
+ bot.length=120;
+ bot.target=null;
+}
+
+function resetPlayer(){
+ for(const p of snake.body){
+  foods.push({x:p.x+rand(-4,4),y:p.y+rand(-4,4),r:3});
+ }
+ snake.x=world.w/2;
+ snake.y=world.h/2;
+ snake.body=[];
+ snake.length=140;
+ trailLen=0;
+}
+
+let pointer={x:innerWidth/2,y:innerHeight/2};
+addEventListener("mousemove",e=>{pointer.x=e.clientX;pointer.y=e.clientY});
+
+const cam={x:0,y:0};
+let last=performance.now();
+function loop(t){
+ const dt=Math.min(.033,(t-last)/1000);last=t;
+
+ const dx=(cam.x+pointer.x)-snake.x;
+ const dy=(cam.y+pointer.y)-snake.y;
+ const d=Math.hypot(dx,dy)||1;
+ snake.vx=(dx/d)*snake.speed;
+ snake.vy=(dy/d)*snake.speed;
+
+ snake.x+=snake.vx*dt;
+ snake.y+=snake.vy*dt;
+ addTrail(snake);
+
+ for(let i=foods.length-1;i>=0;i--){
+  if(dist(snake.x,snake.y,foods[i].x,foods[i].y)<snake.radius+foods[i].r){
+   foods.splice(i,1);
+   snake.length+=12;
+  }
+ }
+
+ for(const bot of bots){
+  updateBot(bot,dt);
+
+  // player kills bot
+  if(headHitsBody(snake.x,snake.y,snake.radius,bot.body,bot.radius)){
+    killBot(bot);
+  }
+
+  // bot kills player
+  if(headHitsBody(bot.x,bot.y,bot.radius,snake.body,snake.radius)){
+    resetPlayer();
+  }
+ }
+
+ cam.x=snake.x-innerWidth/2;
+ cam.y=snake.y-innerHeight/2;
+
+ ctx.clearRect(0,0,innerWidth,innerHeight);
+ ctx.save();ctx.translate(-cam.x,-cam.y);
+
+ foods.forEach(f=>{ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(f.x,f.y,f.r,0,Math.PI*2);ctx.fill()});
+
+ bots.forEach(bot=>{
+  ctx.strokeStyle=bot.color;
+  ctx.lineWidth=bot.radius*2;
+  ctx.beginPath();
+  bot.body.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+  ctx.stroke();
+  ctx.fillStyle=bot.color;
+  ctx.beginPath();ctx.arc(bot.x,bot.y,bot.radius+1,0,Math.PI*2);ctx.fill();
+ });
+
+ ctx.strokeStyle=snake.color;
+ ctx.lineWidth=snake.radius*2;
+ ctx.beginPath();
+ snake.body.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+ ctx.stroke();
+ ctx.fillStyle=snake.color;
+ ctx.beginPath();ctx.arc(snake.x,snake.y,snake.radius+1,0,Math.PI*2);ctx.fill();
+
+ ctx.restore();
+ requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

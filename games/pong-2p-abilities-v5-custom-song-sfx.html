@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pong (2 spelers) + Abilities + VFX + Rainbow Rush (Custom Song) + SFX</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #070912; color: #e8eef6; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .wrap { height: 100%; display: grid; place-items: center; padding: 16px; }
+    .hud { width: min(1040px, 98vw); display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; opacity: 0.95; gap: 12px; }
+    .hud small { opacity: 0.75; }
+    .col { min-width: 260px; }
+    .mid { text-align:center; flex: 1; }
+    canvas { background: #0f1720; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.35); width: min(1040px, 98vw); height: auto; }
+    .hint { width: min(1040px, 98vw); margin-top: 10px; font-size: 14px; opacity: 0.88; line-height: 1.35; }
+    kbd { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-bottom-color: rgba(255,255,255,0.18); border-radius: 8px; padding: 2px 6px; font-size: 12px; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); font-size: 12px; }
+    .legend { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; display:inline-block; margin-right: 6px; transform: translateY(1px); }
+    code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,.10); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div class="col">
+        <div><strong>Links</strong>: <span id="scoreL">0</span></div>
+        <small><kbd>W</kbd>/<kbd>S</kbd> • Ability: <span class="pill" id="abL">—</span> (<kbd>D</kbd>)</small>
+      </div>
+
+      <div class="mid">
+        <div><strong>PONG</strong> <span id="status" style="opacity:.75"></span></div>
+        <small>
+          <kbd>Spatie</kbd> pauze • <kbd>R</kbd> reset • <kbd>1–3</kbd> snelheid • <kbd>M</kbd> mute
+        </small>
+        <div style="margin-top:4px; font-size:12px; opacity:.75">
+          Rainbow Rush: elke 30s kans om te starten (8s) — veld + bal regenboog 🌈 + song + andere SFX
+        </div>
+      </div>
+
+      <div class="col" style="text-align:right">
+        <div><strong>Rechts</strong>: <span id="scoreR">0</span></div>
+        <small><kbd>↑</kbd>/<kbd>↓</kbd> • Ability: <span class="pill" id="abR">—</span> (<kbd>K</kbd>)</small>
+      </div>
+    </div>
+
+    <canvas id="c" width="1040" height="560" aria-label="Pong 2 spelers met rainbow rush en sound effects"></canvas>
+
+    <div class="hint">
+      <div><strong>Custom Rainbow Rush song</strong>: zet je eigen (legaal verkregen) mp3 in dezelfde map als deze HTML met exact deze naam:
+        <code>NO_BATIDAO_slowed.mp3</code>
+      </div>
+      <div style="margin-top:6px;"><span class="pill">Belangrijk</span> Browsers laten audio pas starten na een toets. Druk bv. <kbd>W</kbd> of <kbd>↑</kbd> om alles “unlocked” te krijgen.</div>
+      <div style="margin-top:6px;"><strong>Gebruik</strong>: <kbd>D</kbd>/<kbd>K</kbd> abilities • <kbd>M</kbd> mute • FREEZE heeft ijspegels op de bevroren kant.</div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+
+  <!-- NOTE: We do NOT ship copyrighted music. You provide the file locally. -->
+  <audio id="rainbowSong" src="NO_BATIDAO_slowed.mp3" loop preload="auto"></audio>
+
+  <script>
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d");
+
+    const scoreLEl = document.getElementById("scoreL");
+    const scoreREl = document.getElementById("scoreR");
+    const statusEl = document.getElementById("status");
+    const abLEl = document.getElementById("abL");
+    const abREl = document.getElementById("abR");
+    const legendEl = document.getElementById("legend");
+    const rainbowSong = document.getElementById("rainbowSong");
+
+    const W = canvas.width, H = canvas.height;
+
+    const paddleBase = { w: 14, h: 110, margin: 30, speed: 560 };
+    const ballCfg = { r: 9, baseSpeed: 480, maxSpeed: 1040, accel: 1.055 };
+    const net = { w: 6, gap: 16 };
+    const targetCfg = { r: 16, cooldown: 1.0, minY: 60, maxY: H - 60 };
+
+    const AB = {
+      BIG:     { color: "#7CFFB2", kind: "timed", duration: 6.0, desc: "Paddle groter (6s)" },
+      FAST:    { color: "#8FD3FF", kind: "timed", duration: 6.0, desc: "Paddle sneller (6s)" },
+      SPIN:    { color: "#FFB86B", kind: "oneshot", desc: "Volgende hit extra curve (1x)" },
+      FREEZE:  { color: "#B6A6FF", kind: "oneshot", desc: "Bevries tegenstander (1.2s)" },
+      REVERSE: { color: "#FF6FAE", kind: "timed", duration: 4.0, desc: "Keert controls tegenstander om (4s)" },
+      SHIELD:  { color: "#FFE56B", kind: "charges", charges: 1, desc: "1x redding (kaatst terug)" },
+      MULTI:   { color: "#7CFFEB", kind: "timed", duration: 6.0, desc: "Extra bal (6s)" }
+    };
+    const AB_KEYS = Object.keys(AB);
+
+    function buildLegend() {
+      const parts = AB_KEYS.map(k => {
+        const col = AB[k].color;
+        return `<span class="pill"><span class="dot" style="background:${col}"></span>${k}</span>`;
+      });
+      legendEl.innerHTML = parts.join(" ");
+      const desc = AB_KEYS.map(k => `<div style="margin-top:6px;"><span class="pill"><span class="dot" style="background:${AB[k].color}"></span>${k}</span> — ${AB[k].desc}</div>`).join("");
+      legendEl.insertAdjacentHTML("beforeend", `<div style="flex-basis:100%"></div>${desc}`);
+    }
+
+    const state = {
+      paused:false, started:false, scoreL:0, scoreR:0, keys:new Set(),
+      lastT:performance.now(), speedMult:1, lastHit:null,
+      rainbowActive:false, rainbowTimer:0, rainbowCheck:30.0,
+      muted:false,
+      audioUnlocked:false
+    };
+
+    function mkPlayer(isLeft) {
+      return {
+        x: isLeft ? paddleBase.margin : W - paddleBase.margin - paddleBase.w,
+        y: (H - paddleBase.h)/2, vy:0, speed:paddleBase.speed, h:paddleBase.h,
+        stored:null,
+        active:null, activeTimer:0,
+        spinReady:false, reverseTimer:0, frozenTimer:0, shield:0, multiTimer:0
+      };
+    }
+    const left = mkPlayer(true);
+    const right = mkPlayer(false);
+
+    function randY(){ return targetCfg.minY + Math.random()*(targetCfg.maxY-targetCfg.minY); }
+
+    function mkBall(){ return { x:W/2, y:H/2, vx:0, vy:0, speed:ballCfg.baseSpeed, isExtra:false, extraOwner:null, trail:[] }; }
+    const balls = [mkBall()];
+
+    function pickAbility(){ return AB_KEYS[(Math.random()*AB_KEYS.length)|0]; }
+    const target = { x:W/2, y:randY(), alive:true, cd:0, ability:pickAbility() };
+
+    // VFX
+    const vfx = { particles:[], shakes:0, reverseGlitch:0 };
+
+    // ---------- Audio: SFX engine (WebAudio) ----------
+    let audio = null;
+
+    function ensureAudioUnlocked(){
+      if (state.audioUnlocked) return;
+      state.audioUnlocked = true;
+
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audio = new AC();
+
+      // master
+      const master = audio.createGain();
+      master.gain.value = state.muted ? 0 : 0.8;
+      master.connect(audio.destination);
+
+      // tiny noise buffer for hats/snare-ish sfx
+      const noiseBuf = audio.createBuffer(1, audio.sampleRate, audio.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for(let i=0;i<data.length;i++) data[i] = (Math.random()*2 - 1);
+
+      function ping(t, freq, dur, gain, type="sine"){
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(gain, t + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g); g.connect(master);
+        o.start(t); o.stop(t + dur + 0.02);
+      }
+
+      function noiseHit(t, hpFreq, dur, gain){
+        const n = audio.createBufferSource();
+        n.buffer = noiseBuf;
+        const hp = audio.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = hpFreq;
+
+        const g = audio.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(gain, t + 0.002);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+        n.connect(hp); hp.connect(g); g.connect(master);
+        n.start(t); n.stop(t + dur + 0.02);
+      }
+
+      // Expose SFX API (normal vs rainbow variants)
+      window.__SFX__ = {
+        setMuted(on){
+          state.muted = on;
+          master.gain.setTargetAtTime(on ? 0 : 0.8, audio.currentTime, 0.02);
+          // also mute song element
+          rainbowSong.muted = on;
+        },
+        paddleHit(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 620 + Math.random()*80, 0.06, 0.20, "triangle");
+            ping(t+0.01, 340 + Math.random()*40, 0.05, 0.12, "sine");
+          } else {
+            // brighter, more “laser”
+            ping(t, 980 + Math.random()*180, 0.07, 0.18, "square");
+            ping(t+0.01, 1400 + Math.random()*220, 0.05, 0.10, "sawtooth");
+          }
+        },
+        wallHit(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 420 + Math.random()*70, 0.05, 0.14, "sine");
+          } else {
+            ping(t, 760 + Math.random()*140, 0.05, 0.12, "triangle");
+            noiseHit(t, 5200, 0.03, 0.10);
+          }
+        },
+        targetHit(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 900, 0.08, 0.22, "triangle");
+            ping(t+0.02, 1250, 0.06, 0.16, "sine");
+          } else {
+            // “sparkly”
+            for (let i=0;i<3;i++) ping(t+i*0.015, 1200 + i*220, 0.05, 0.12, "square");
+          }
+        },
+        score(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 220, 0.12, 0.22, "sine");
+            ping(t+0.06, 180, 0.12, 0.18, "sine");
+          } else {
+            ping(t, 320, 0.10, 0.16, "sawtooth");
+            ping(t+0.05, 520, 0.10, 0.14, "sawtooth");
+            noiseHit(t+0.02, 3500, 0.06, 0.10);
+          }
+        },
+        freeze(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 560, 0.18, 0.12, "sine");
+            noiseHit(t, 2200, 0.12, 0.12);
+          } else {
+            // icy + bitcrush-y vibe (approx)
+            ping(t, 880, 0.14, 0.14, "square");
+            noiseHit(t, 4200, 0.10, 0.14);
+          }
+        },
+        ability(rush){
+          const t = audio.currentTime;
+          if (!rush) {
+            ping(t, 740, 0.08, 0.16, "triangle");
+            ping(t+0.03, 980, 0.08, 0.12, "triangle");
+          } else {
+            ping(t, 1100, 0.06, 0.14, "square");
+            ping(t+0.02, 1500, 0.06, 0.10, "square");
+          }
+        }
+      };
+
+      // Unmute song as well (subject to browser rules; unlocked by this gesture)
+      rainbowSong.muted = state.muted;
+      rainbowSong.volume = 0.85;
+    }
+
+    function sfx(name){
+      if (!window.__SFX__) return;
+      const rush = state.rainbowActive;
+      const fn = window.__SFX__[name];
+      if (typeof fn === "function") fn(rush);
+    }
+
+    // ---------- Helpers ----------
+    function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+    function hexToRgba(hex,a){
+      const h=hex.replace("#","").trim();
+      const r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    function hsl(h,s,l,a=1){ return `hsla(${h},${s}%,${l}%,${a})`; }
+
+    function burst(x,y,color,count=18,power=220){
+      for(let i=0;i<count;i++){
+        const ang=Math.random()*Math.PI*2;
+        const sp=power*(0.35+Math.random()*0.65);
+        vfx.particles.push({x,y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,life:0,maxLife:0.45+Math.random()*0.45,r:1.5+Math.random()*2.8,color});
+      }
+    }
+    function ring(x,y,color){
+      for(let i=0;i<22;i++){
+        const ang=(i/22)*Math.PI*2;
+        vfx.particles.push({x:x+Math.cos(ang)*10,y:y+Math.sin(ang)*10,vx:Math.cos(ang)*160,vy:Math.sin(ang)*160,life:0,maxLife:0.55,r:2.2,color});
+      }
+    }
+    function updateParticles(dt){
+      for(let i=vfx.particles.length-1;i>=0;i--){
+        const p=vfx.particles[i];
+        p.life+=dt;
+        p.x+=p.vx*dt; p.y+=p.vy*dt;
+        p.vx*=Math.pow(0.15,dt); p.vy*=Math.pow(0.15,dt);
+        p.vy+=180*dt;
+        if(p.life>=p.maxLife) vfx.particles.splice(i,1);
+      }
+      if(vfx.shakes>0) vfx.shakes-=dt;
+      if(vfx.reverseGlitch>0) vfx.reverseGlitch-=dt;
+    }
+    function drawParticles(){
+      for(const p of vfx.particles){
+        const a=1-(p.life/p.maxLife);
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+        const alpha = Math.max(0,a)*0.9;
+        ctx.fillStyle = p.color.startsWith("#") ? hexToRgba(p.color, alpha) : p.color.replace("%%A%%", String(alpha));
+        ctx.fill();
+      }
+    }
+
+    function updateAbilityPill(){ abLEl.textContent = left.stored ?? "—"; abREl.textContent = right.stored ?? "—"; }
+
+    function setSpeed(mult){
+      state.speedMult=mult;
+      statusEl.textContent = mult===1 ? "" : `• snelheid x${mult.toFixed(1)}`;
+      for(const b of balls){
+        const cur=Math.hypot(b.vx,b.vy);
+        if(cur>0.0001){
+          const targetSpeed=ballCfg.baseSpeed*state.speedMult;
+          const k=targetSpeed/cur;
+          b.vx*=k; b.vy*=k; b.speed=targetSpeed;
+        }
+      }
+    }
+
+    function serveBall(b, servingToRight){
+      b.x=W/2; b.y=H/2;
+      b.speed=ballCfg.baseSpeed*state.speedMult;
+      const angle=(Math.random()*0.6-0.3);
+      const dir=servingToRight?1:-1;
+      b.vx=Math.cos(angle)*b.speed*dir;
+      b.vy=Math.sin(angle)*b.speed;
+      state.started=true; state.lastHit=null;
+      b.trail.length=0;
+    }
+
+    function resetPlayer(p){
+      p.speed=paddleBase.speed; p.h=paddleBase.h; p.vy=0;
+      p.stored=null; p.active=null; p.activeTimer=0;
+      p.spinReady=false; p.reverseTimer=0; p.frozenTimer=0; p.shield=0; p.multiTimer=0;
+      p.y=clamp(p.y,10,H-p.h-10);
+    }
+
+    function resetGame(){
+      state.scoreL=0; state.scoreR=0;
+      scoreLEl.textContent="0"; scoreREl.textContent="0";
+      left.y=(H-paddleBase.h)/2; right.y=(H-paddleBase.h)/2;
+      resetPlayer(left); resetPlayer(right); updateAbilityPill();
+
+      balls.length=0; balls.push(mkBall());
+      state.started=false;
+      balls[0].vx=0; balls[0].vy=0; balls[0].x=W/2; balls[0].y=H/2;
+
+      target.alive=true; target.cd=0; target.y=randY(); target.ability=pickAbility();
+      vfx.particles.length=0; vfx.shakes=0; vfx.reverseGlitch=0;
+
+      stopRainbowRush(true);
+
+      statusEl.textContent=""; state.paused=false;
+    }
+
+    // ---------- Rainbow Rush: ONLY then play the user-provided song ----------
+    async function startRainbowRush(){
+      state.rainbowActive = true;
+      state.rainbowTimer = 8.0;
+      vfx.shakes = Math.max(vfx.shakes, 0.18);
+      burst(W/2, H/2, "hsla(0,90%,70%,%%A%%)", 40, 320);
+
+      // Try to play the local song (requires user gesture happened earlier)
+      if (!state.muted) {
+        try {
+          rainbowSong.currentTime = 0;
+          await rainbowSong.play();
+        } catch (e) {
+          // If blocked, we just skip silently.
+        }
+      }
+    }
+    function stopRainbowRush(hard=false){
+      state.rainbowActive = false;
+      state.rainbowTimer = 0;
+
+      // stop song when rush ends
+      try {
+        rainbowSong.pause();
+        if (hard) rainbowSong.currentTime = 0;
+      } catch (_) {}
+    }
+
+    function maybeRainbowRush(dt){
+      if (state.rainbowActive) {
+        state.rainbowTimer -= dt;
+        if (state.rainbowTimer <= 0) stopRainbowRush(false);
+        return;
+      }
+      state.rainbowCheck -= dt;
+      if (state.rainbowCheck <= 0) {
+        state.rainbowCheck = 30.0;
+        if (Math.random() < 0.60) startRainbowRush();
+      }
+    }
+
+    // ---------- Drawing ----------
+    function drawNet(alpha){
+      ctx.fillStyle = `rgba(232, 238, 246, ${alpha})`;
+      for(let y=10;y<H-10;y+=net.gap*2) ctx.fillRect(W/2-net.w/2,y,net.w,net.gap);
+    }
+
+    function drawBackground(hue){
+      const grad = ctx.createLinearGradient(0, 0, W, H);
+      if (!state.rainbowActive) {
+        grad.addColorStop(0, "rgba(20, 16, 54, 0.55)");
+        grad.addColorStop(1, "rgba(8, 28, 46, 0.55)");
+      } else {
+        grad.addColorStop(0, hsl(hue, 75, 18, 0.55));
+        grad.addColorStop(0.5, hsl((hue+120)%360, 75, 18, 0.55));
+        grad.addColorStop(1, hsl((hue+240)%360, 75, 18, 0.55));
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      const g = ctx.createRadialGradient(W/2,H/2,60,W/2,H/2,Math.max(W,H));
+      g.addColorStop(0,"rgba(255,255,255,0.04)");
+      g.addColorStop(1,"rgba(0,0,0,0)");
+      ctx.fillStyle=g;
+      ctx.fillRect(0,0,W,H);
+    }
+
+    function drawPaddle(p){
+      ctx.fillStyle="#e8eef6";
+      ctx.fillRect(p.x,p.y,paddleBase.w,p.h);
+      if(p.shield>0){
+        const cx=p.x+(p===left?-12:paddleBase.w+12);
+        const cy=p.y+p.h/2;
+        ctx.beginPath(); ctx.arc(cx,cy,12,0,Math.PI*2);
+        ctx.fillStyle="rgba(255, 229, 107, 0.16)"; ctx.fill();
+        ctx.strokeStyle="rgba(255, 229, 107, 0.70)"; ctx.lineWidth=2; ctx.stroke(); ctx.lineWidth=1;
+      }
+    }
+
+    function drawBallTrail(b, hue){
+      if(b.trail.length<2) return;
+      ctx.beginPath();
+      for(let i=0;i<b.trail.length;i++){
+        const t=b.trail[i];
+        if(i===0) ctx.moveTo(t.x,t.y); else ctx.lineTo(t.x,t.y);
+      }
+      ctx.strokeStyle = state.rainbowActive ? hsl(hue, 95, 70, 0.18) : (b.isExtra?"rgba(232,238,246,0.18)":"rgba(232,238,246,0.22)");
+      ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+    }
+    function drawBall(b, hue){
+      drawBallTrail(b, hue);
+      ctx.beginPath(); ctx.arc(b.x,b.y,ballCfg.r,0,Math.PI*2);
+      ctx.fillStyle = state.rainbowActive ? hsl(hue, 95, 72, 1) : (b.isExtra?"rgba(232,238,246,0.75)":"#e8eef6");
+      ctx.fill();
+    }
+
+    function drawTarget(hue){
+      if(!target.alive) return;
+      const ab=AB[target.ability];
+      const c = state.rainbowActive ? hsl(hue, 95, 70, 1) : (ab?.color ?? "#e8eef6");
+
+      ctx.beginPath(); ctx.arc(target.x,target.y,targetCfg.r+10,0,Math.PI*2);
+      ctx.fillStyle = c.startsWith("#") ? hexToRgba(c,0.10) : hsl(hue,95,70,0.10);
+      ctx.fill();
+
+      ctx.beginPath(); ctx.arc(target.x,target.y,targetCfg.r,0,Math.PI*2);
+      ctx.fillStyle = c.startsWith("#") ? hexToRgba(c,0.20) : hsl(hue,95,70,0.20);
+      ctx.fill();
+
+      ctx.beginPath(); ctx.arc(target.x,target.y,targetCfg.r-6,0,Math.PI*2);
+      ctx.strokeStyle = c.startsWith("#") ? hexToRgba(c,0.75) : hsl(hue,95,70,0.75);
+      ctx.lineWidth=2; ctx.stroke(); ctx.lineWidth=1;
+
+      ctx.fillStyle="rgba(232,238,246,0.88)";
+      ctx.font="11px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.textAlign="center";
+      ctx.fillText(target.ability,target.x,target.y+4);
+    }
+
+    function drawFreezeOverlay(side,strength){
+      const x0=(side==="L")?0:W/2;
+      const w=W/2;
+
+      ctx.fillStyle=`rgba(182, 166, 255, ${0.10*strength})`;
+      ctx.fillRect(x0,0,w,H);
+
+      ctx.fillStyle="rgba(182, 166, 255, 0.55)";
+      const n=12, step=w/n;
+      for(let i=0;i<n;i++){
+        const xx=x0+i*step;
+        const h1=(18+Math.random()*40)*strength;
+        ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx+step*0.7,0); ctx.lineTo(xx+step*0.35,h1); ctx.closePath(); ctx.fill();
+        const h2=(14+Math.random()*34)*strength;
+        ctx.beginPath(); ctx.moveTo(xx,H); ctx.lineTo(xx+step*0.7,H); ctx.lineTo(xx+step*0.35,H-h2); ctx.closePath(); ctx.fill();
+      }
+
+      const grad=ctx.createLinearGradient(x0,0,x0+w,0);
+      if(side==="L"){
+        grad.addColorStop(0,`rgba(182,166,255,${0.22*strength})`);
+        grad.addColorStop(1,"rgba(182,166,255,0)");
+      } else {
+        grad.addColorStop(0,"rgba(182,166,255,0)");
+        grad.addColorStop(1,`rgba(182,166,255,${0.22*strength})`);
+      }
+      ctx.fillStyle=grad;
+      ctx.fillRect(x0,0,w,H);
+    }
+
+    function drawReverseGlitch(strength){
+      const lines=18;
+      ctx.save();
+      ctx.globalAlpha=0.12*strength;
+      ctx.fillStyle="rgba(255, 111, 174, 1)";
+      for(let i=0;i<lines;i++){
+        const y=(Math.random()*H)|0;
+        const h=1+((Math.random()*3)|0);
+        ctx.fillRect(0,y,W,h);
+      }
+      ctx.restore();
+    }
+
+    function draw(){
+      ctx.save();
+
+      const now = performance.now();
+      const hue = (now / 18) % 360;
+
+      if(vfx.shakes>0){
+        const s=vfx.shakes;
+        ctx.translate((Math.random()*2-1)*6*s,(Math.random()*2-1)*6*s);
+      }
+
+      ctx.clearRect(0,0,W,H);
+
+      drawBackground(hue);
+      drawNet(state.rainbowActive ? 0.24 : 0.18);
+      drawTarget(hue);
+      drawPaddle(left);
+      drawPaddle(right);
+
+      for(const b of balls) drawBall(b, hue);
+
+      drawParticles();
+
+      if(left.frozenTimer>0) drawFreezeOverlay("L", clamp(left.frozenTimer/1.2,0.2,1));
+      if(right.frozenTimer>0) drawFreezeOverlay("R", clamp(right.frozenTimer/1.2,0.2,1));
+
+      const revStrength=clamp(Math.max(left.reverseTimer,right.reverseTimer)/4.0,0,1);
+      if(revStrength>0) drawReverseGlitch(revStrength);
+
+      if (state.rainbowActive) {
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(0, 12, W, 30);
+        ctx.fillStyle = "rgba(232,238,246,0.92)";
+        ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("🌈 RAINBOW RUSH 🌈", W/2, 33);
+      }
+
+      if(!state.started){
+        ctx.fillStyle="rgba(232,238,246,0.80)";
+        ctx.font="18px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.textAlign="center";
+        ctx.fillText("Beweeg om te starten", W/2, H/2-12);
+        ctx.font="14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.fillText("Raak een gekleurde target = ability • D/K om te activeren", W/2, H/2+16);
+      }
+
+      if(state.paused){
+        ctx.fillStyle="rgba(0,0,0,0.45)";
+        ctx.fillRect(0,0,W,H);
+        ctx.fillStyle="#e8eef6";
+        ctx.font="22px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.textAlign="center";
+        ctx.fillText("Gepauzeerd", W/2, H/2);
+      }
+
+      ctx.restore();
+    }
+
+    // ---------- Gameplay ----------
+    function circleHit(cx,cy,cr,x,y,r){
+      const dx=x-cx, dy=y-cy, rr=cr+r;
+      return (dx*dx+dy*dy)<=rr*rr;
+    }
+
+    function grantAbility(player, abilityName){
+      player.stored=abilityName;
+      updateAbilityPill();
+      const c=AB[abilityName]?.color ?? "#e8eef6";
+      burst(player===left?left.x+40:right.x-40, player.y+player.h/2, c, 14, 180);
+      sfx("ability");
+    }
+
+    function activateAbility(player, opponent){
+      if(!player.stored) return;
+      const abName=player.stored;
+      const meta=AB[abName];
+      player.stored=null;
+      updateAbilityPill();
+      if(!meta) return;
+
+      const c=meta.color ?? "#e8eef6";
+      ring(player===left?left.x+40:right.x-40, player.y+player.h/2, c);
+      sfx("ability");
+
+      if(abName==="SPIN"){
+        player.spinReady=true;
+        player.active="SPIN"; player.activeTimer=0;
+        return;
+      }
+      if(abName==="FREEZE"){
+        opponent.frozenTimer=Math.max(opponent.frozenTimer,1.2);
+        player.active="FREEZE"; player.activeTimer=1.2;
+        burst(opponent===left?W*0.25:W*0.75, H*0.5, meta.color, 30, 260);
+        vfx.shakes=Math.max(vfx.shakes,0.18);
+        sfx("freeze");
+        return;
+      }
+      if(abName==="SHIELD"){
+        player.shield += meta.charges ?? 1;
+        player.active="SHIELD"; player.activeTimer=1.6;
+        return;
+      }
+      if(abName==="REVERSE"){
+        opponent.reverseTimer=Math.max(opponent.reverseTimer, meta.duration ?? 4.0);
+        player.active="REVERSE"; player.activeTimer=meta.duration ?? 4.0;
+        vfx.reverseGlitch=Math.max(vfx.reverseGlitch,0.35);
+        return;
+      }
+      if(abName==="MULTI"){
+        const owner=(player===left?"L":"R");
+        const hasOwned=balls.some(b=>b.isExtra && b.extraOwner===owner);
+        if(!hasOwned){
+          const b=mkBall();
+          b.isExtra=true; b.extraOwner=owner;
+          const main=balls[0];
+          const dirRight=(Math.hypot(main.vx,main.vy)<0.01) ? (Math.random()<0.5) : (main.vx>0);
+          serveBall(b,dirRight);
+          balls.push(b);
+        }
+        player.active="MULTI"; player.activeTimer=meta.duration ?? 6.0; player.multiTimer=meta.duration ?? 6.0;
+        return;
+      }
+
+      player.active=abName; player.activeTimer=meta.duration ?? 6.0;
+      if(abName==="BIG") player.h=Math.round(paddleBase.h*1.45);
+      if(abName==="FAST") player.speed=Math.round(paddleBase.speed*1.45);
+      player.y=clamp(player.y,10,H-player.h-10);
+    }
+
+    function expireSelfBuff(player){
+      if(!player.active) return;
+      if(player.active==="BIG"||player.active==="FAST"){ player.speed=paddleBase.speed; player.h=paddleBase.h; }
+      if(player.active==="MULTI"){
+        const owner=(player===left?"L":"R");
+        for(let i=balls.length-1;i>=0;i--) if(balls[i].isExtra && balls[i].extraOwner===owner) balls.splice(i,1);
+        player.multiTimer=0;
+      }
+      if(player.active==="SPIN") player.spinReady=false;
+      player.active=null; player.activeTimer=0;
+    }
+
+    function paddleCollision(b,p,side){
+      const r=ballCfg.r;
+      const hit = (b.x+r>p.x && b.x-r<p.x+paddleBase.w && b.y+r>p.y && b.y-r<p.y+p.h);
+      if(!hit) return false;
+
+      state.lastHit=side;
+
+      if(b.vx<0) b.x=p.x+paddleBase.w+r; else b.x=p.x-r;
+
+      const rel=((b.y-p.y)/p.h)*2-1;
+      const bounce=rel*0.95;
+
+      b.speed=Math.min(b.speed*ballCfg.accel, ballCfg.maxSpeed);
+      const dir=(b.vx<0)?1:-1;
+
+      b.vx=Math.cos(bounce)*b.speed*dir;
+      b.vy=Math.sin(bounce)*b.speed;
+      b.vy += p.vy*0.12;
+
+      if(p.spinReady){
+        b.vy += 280*rel;
+        p.spinReady=false;
+        if(p.active==="SPIN") expireSelfBuff(p);
+        burst(b.x,b.y,AB.SPIN.color,18,220);
+      }
+      burst(b.x,b.y,"#E8EEF6",8,160);
+      sfx("paddleHit");
+      return true;
+    }
+
+    function applyTimers(dt){
+      if(left.frozenTimer>0) left.frozenTimer-=dt;
+      if(right.frozenTimer>0) right.frozenTimer-=dt;
+      if(left.reverseTimer>0) left.reverseTimer-=dt;
+      if(right.reverseTimer>0) right.reverseTimer-=dt;
+
+      for(const p of [left,right]){
+        if(p.active && p.activeTimer>0){
+          p.activeTimer-=dt;
+          if((p.active==="BIG"||p.active==="FAST"||p.active==="MULTI") && p.activeTimer<=0) expireSelfBuff(p);
+          if((p.active==="FREEZE"||p.active==="REVERSE"||p.active==="SHIELD") && p.activeTimer<=0){ p.active=null; p.activeTimer=0; }
+        }
+      }
+    }
+
+    function updateTarget(dt){
+      if(!target.alive){
+        target.cd-=dt;
+        if(target.cd<=0){ target.alive=true; target.y=randY(); target.ability=pickAbility(); }
+      }
+    }
+
+    function updateTrails(){
+      for(const b of balls){
+        b.trail.push({x:b.x,y:b.y});
+        if(b.trail.length>14) b.trail.shift();
+      }
+    }
+
+    function update(dt){
+      applyTimers(dt);
+      updateTarget(dt);
+      updateParticles(dt);
+      maybeRainbowRush(dt);
+
+      left.vy=0; right.vy=0;
+
+      const leftFrozen = left.frozenTimer>0;
+      const rightFrozen = right.frozenTimer>0;
+      const leftReverse = left.reverseTimer>0;
+      const rightReverse = right.reverseTimer>0;
+
+      if(!leftFrozen){
+        const up=state.keys.has("KeyW"), down=state.keys.has("KeyS");
+        if(!leftReverse){ if(up) left.vy=-left.speed; if(down) left.vy=left.speed; }
+        else { if(up) left.vy=left.speed; if(down) left.vy=-left.speed; }
+      }
+      if(!rightFrozen){
+        const up=state.keys.has("ArrowUp"), down=state.keys.has("ArrowDown");
+        if(!rightReverse){ if(up) right.vy=-right.speed; if(down) right.vy=right.speed; }
+        else { if(up) right.vy=right.speed; if(down) right.vy=-right.speed; }
+      }
+
+      if((left.vy!==0||right.vy!==0) && !state.started) serveBall(balls[0], Math.random()<0.5);
+
+      left.y=clamp(left.y+left.vy*dt,10,H-left.h-10);
+      right.y=clamp(right.y+right.vy*dt,10,H-right.h-10);
+
+      for(const b of balls){
+        b.x+=b.vx*dt; b.y+=b.vy*dt;
+
+        // walls
+        if(b.y-ballCfg.r<=0){ b.y=ballCfg.r; b.vy*=-1; sfx("wallHit"); }
+        if(b.y+ballCfg.r>=H){ b.y=H-ballCfg.r; b.vy*=-1; sfx("wallHit"); }
+
+        // target
+        if(target.alive && circleHit(target.x,target.y,targetCfg.r,b.x,b.y,ballCfg.r)){
+          const abName=target.ability;
+          const c=AB[abName]?.color ?? "#e8eef6";
+          target.alive=false; target.cd=targetCfg.cooldown;
+          burst(target.x,target.y,c,32,260);
+          vfx.shakes=Math.max(vfx.shakes,0.12);
+
+          sfx("targetHit");
+
+          if(state.lastHit==="L") grantAbility(left,abName);
+          else if(state.lastHit==="R") grantAbility(right,abName);
+
+          target.ability=pickAbility();
+        }
+
+        paddleCollision(b,left,"L");
+        paddleCollision(b,right,"R");
+      }
+
+      updateTrails();
+
+      // score + shield
+      for(let i=balls.length-1;i>=0;i--){
+        const b=balls[i];
+
+        if(b.x+ballCfg.r<0){
+          if(left.shield>0){
+            left.shield--;
+            burst(20,b.y,AB.SHIELD.color,18,220);
+            b.x=ballCfg.r+2;
+            b.vx=Math.abs(b.vx) || (ballCfg.baseSpeed*state.speedMult);
+            b.vy += (Math.random()*120-60);
+            sfx("score");
+          } else {
+            state.scoreR++; scoreREl.textContent=String(state.scoreR);
+            sfx("score");
+            if(b.isExtra) balls.splice(i,1);
+            else { state.started=false; b.vx=0; b.vy=0; b.x=W/2; b.y=H/2; state.lastHit=null; }
+          }
+        }
+
+        if(b.x-ballCfg.r>W){
+          if(right.shield>0){
+            right.shield--;
+            burst(W-20,b.y,AB.SHIELD.color,18,220);
+            b.x=W-ballCfg.r-2;
+            b.vx=-Math.abs(b.vx) || -(ballCfg.baseSpeed*state.speedMult);
+            b.vy += (Math.random()*120-60);
+            sfx("score");
+          } else {
+            state.scoreL++; scoreLEl.textContent=String(state.scoreL);
+            sfx("score");
+            if(b.isExtra) balls.splice(i,1);
+            else { state.started=false; b.vx=0; b.vy=0; b.x=W/2; b.y=H/2; state.lastHit=null; }
+          }
+        }
+      }
+
+      if(balls.length===0) balls.push(mkBall());
+    }
+
+    function loop(t){
+      const dt=Math.min(0.033,(t-state.lastT)/1000);
+      state.lastT=t;
+      if(!state.paused) update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // ---------- Input ----------
+    window.addEventListener("keydown",(e)=>{
+      ensureAudioUnlocked(); // unlock SFX + allow song play later
+
+      if(e.code==="Space"){ state.paused=!state.paused; e.preventDefault(); return; }
+      if(e.code==="KeyR"){ resetGame(); e.preventDefault(); return; }
+      if(e.code==="Digit1"){ setSpeed(0.85); e.preventDefault(); return; }
+      if(e.code==="Digit2"){ setSpeed(1.00); e.preventDefault(); return; }
+      if(e.code==="Digit3"){ setSpeed(1.20); e.preventDefault(); return; }
+      if(e.code==="KeyD"){ activateAbility(left,right); e.preventDefault(); return; }
+      if(e.code==="KeyK"){ activateAbility(right,left); e.preventDefault(); return; }
+      if(e.code==="KeyM"){
+        state.muted = !state.muted;
+        if (window.__SFX__) window.__SFX__.setMuted(state.muted);
+        e.preventDefault();
+        return;
+      }
+
+      state.keys.add(e.code);
+    });
+    window.addEventListener("keyup",(e)=>state.keys.delete(e.code));
+
+    // init
+    buildLegend();
+    updateAbilityPill();
+    resetGame();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

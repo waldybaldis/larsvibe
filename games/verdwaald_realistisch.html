@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verdwaald – een realistische maze game</title>
+<style>
+body {
+  margin:0;
+  background:#0e0e10;
+  color:#eaeaea;
+  font-family:system-ui, Arial, sans-serif;
+  display:grid;
+  place-items:center;
+  height:100vh;
+}
+.wrap { width:min(92vw, 560px); }
+.hud {
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:10px 0;
+  font-size:13px;
+}
+.pill {
+  padding:4px 10px;
+  border:1px solid #333;
+  border-radius:999px;
+  background:#151518;
+}
+canvas {
+  width:100%;
+  background:#111;
+  border-radius:14px;
+}
+.overlay {
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  background:rgba(0,0,0,.75);
+  text-align:center;
+  padding:30px;
+}
+button {
+  padding:8px 14px;
+  border-radius:10px;
+  border:1px solid #333;
+  background:#1f1f22;
+  color:#fff;
+  cursor:pointer;
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="hud">
+    <div class="pill" id="levelEl">Verdieping 1</div>
+    <div class="pill" id="keyEl">Pasje: nee</div>
+    <div class="pill" id="storyEl"></div>
+  </div>
+
+  <div style="position:relative">
+    <canvas id="c" width="560" height="560"></canvas>
+    <div id="overlay" class="overlay"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const overlay = document.getElementById("overlay");
+
+const levelEl = document.getElementById("levelEl");
+const keyEl = document.getElementById("keyEl");
+const storyEl = document.getElementById("storyEl");
+
+const COLORS = {
+  wall:"#2a2a2d",
+  floor:"#141416",
+  player:"#d6c98b",
+  goal:"#4fa36f",
+  key:"#6aa9ff",
+  door:"#8b3a3a",
+  enemy:"#c46b6b"
+};
+
+const STORIES = [
+  "Je wordt wakker in een leeg gebouw.",
+  "De noodverlichting flikkert. Sommige deuren zitten op slot.",
+  "Je hoort iemand lopen op een andere verdieping.",
+  "Dit gebouw is niet verlaten.",
+  "Je herinnert je dit. Je was hier eerder."
+];
+
+let level = 1;
+let cols, rows, cell;
+let grid, player, goal, keyPos, doorPos;
+let hasKey = false, doorOpen = false;
+let enemies = [];
+let enemyTimer;
+
+function setupLevel() {
+  cols = rows = Math.min(21 + level * 2, 39);
+  if (cols % 2 === 0) cols++;
+  cell = Math.floor(canvas.width / cols);
+
+  grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  const stack = [{ x:1, y:1 }];
+  grid[1][1] = 1;
+  const dirs = [[0,-2],[2,0],[0,2],[-2,0]];
+
+  while (stack.length) {
+    const c = stack[stack.length - 1];
+    const shuffled = dirs.sort(() => Math.random() - .5);
+    let carved = false;
+    for (const [dx,dy] of shuffled) {
+      const nx = c.x + dx, ny = c.y + dy;
+      if (nx>0 && ny>0 && nx<cols-1 && ny<rows-1 && grid[ny][nx]===0) {
+        grid[ny][nx] = 1;
+        grid[c.y + dy/2][c.x + dx/2] = 1;
+        stack.push({x:nx,y:ny});
+        carved = true; break;
+      }
+    }
+    if (!carved) stack.pop();
+  }
+
+  player = { x:1, y:1 };
+  goal = { x:cols-2, y:rows-2 };
+  grid[goal.y][goal.x] = 1;
+
+  hasKey = false;
+  doorOpen = false;
+
+  keyPos = randomCell([player, goal]);
+  doorPos = randomCell([player, goal, keyPos]);
+
+  enemies = [];
+  const enemyCount = level === 1 ? 0 : level < 4 ? 1 : 2;
+  for (let i=0;i<enemyCount;i++) {
+    enemies.push(randomCell([player, goal, keyPos, doorPos]));
+  }
+
+  clearInterval(enemyTimer);
+  enemyTimer = setInterval(moveEnemies, 400);
+
+  showStory();
+  updateHUD();
+  draw();
+}
+
+function showStory() {
+  overlay.style.display = "grid";
+  overlay.innerHTML = `
+    <h2>Verdieping ${level}</h2>
+    <p>${STORIES[Math.min(level-1, STORIES.length-1)]}</p>
+    <button id="go">Verder</button>
+  `;
+  document.getElementById("go").onclick = () => overlay.style.display="none";
+}
+
+function randomCell(avoid) {
+  for (let i=0;i<5000;i++) {
+    const x = 1 + Math.random()*(cols-2)|0;
+    const y = 1 + Math.random()*(rows-2)|0;
+    if (grid[y][x]!==1) continue;
+    if (avoid.some(p=>p.x===x && p.y===y)) continue;
+    return {x,y};
+  }
+  return {x:1,y:1};
+}
+
+function updateHUD() {
+  levelEl.textContent = `Verdieping ${level}`;
+  keyEl.textContent = `Pasje: ${hasKey ? "ja" : "nee"}`;
+  storyEl.textContent = enemies.length ? "Je bent niet alleen" : "Stil";
+}
+
+function draw() {
+  for (let y=0;y<rows;y++) for (let x=0;x<cols;x++) {
+    ctx.fillStyle = grid[y][x] ? COLORS.floor : COLORS.wall;
+    ctx.fillRect(x*cell, y*cell, cell, cell);
+  }
+
+  ctx.fillStyle = COLORS.goal;
+  ctx.fillRect(goal.x*cell, goal.y*cell, cell, cell);
+
+  if (!doorOpen) {
+    ctx.fillStyle = COLORS.door;
+    ctx.fillRect(doorPos.x*cell, doorPos.y*cell, cell, cell);
+  }
+
+  if (!hasKey) {
+    ctx.fillStyle = COLORS.key;
+    ctx.beginPath();
+    ctx.arc(keyPos.x*cell+cell/2, keyPos.y*cell+cell/2, cell*.2, 0, 7);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = COLORS.enemy;
+  enemies.forEach(e =>
+    ctx.fillRect(e.x*cell, e.y*cell, cell, cell)
+  );
+
+  ctx.fillStyle = COLORS.player;
+  ctx.beginPath();
+  ctx.arc(player.x*cell+cell/2, player.y*cell+cell/2, cell*.3, 0, 7);
+  ctx.fill();
+}
+
+function canMove(x,y) {
+  if (grid[y]?.[x] !== 1) return false;
+  if (!doorOpen && x===doorPos.x && y===doorPos.y && !hasKey) return false;
+  return true;
+}
+
+function moveEnemies() {
+  enemies = enemies.map(e => {
+    const options = [[0,-1],[1,0],[0,1],[-1,0]]
+      .map(([dx,dy]) => ({x:e.x+dx,y:e.y+dy}))
+      .filter(p => canMove(p.x,p.y));
+    return options.length
+      ? options[Math.random()*options.length|0]
+      : e;
+  });
+
+  if (enemies.some(e => e.x===player.x && e.y===player.y)) gameOver();
+  draw();
+}
+
+function move(dx,dy) {
+  const nx=player.x+dx, ny=player.y+dy;
+  if (!canMove(nx,ny)) return;
+
+  player={x:nx,y:ny};
+
+  if (!hasKey && nx===keyPos.x && ny===keyPos.y) hasKey=true;
+  if (hasKey && !doorOpen && nx===doorPos.x && ny===doorPos.y) doorOpen=true;
+
+  if (enemies.some(e => e.x===nx && e.y===ny)) gameOver();
+  if (nx===goal.x && ny===goal.y) { level++; setupLevel(); }
+
+  updateHUD(); draw();
+}
+
+function gameOver() {
+  clearInterval(enemyTimer);
+  overlay.style.display="grid";
+  overlay.innerHTML = `
+    <h2>Stopgezet</h2>
+    <p>Iemand houdt je tegen. Je moet opnieuw beginnen.</p>
+    <button onclick="location.reload()">Opnieuw</button>
+  `;
+}
+
+window.addEventListener("keydown", e => {
+  const k=e.key.toLowerCase();
+  if (k==="arrowup"||k==="w") move(0,-1);
+  if (k==="arrowdown"||k==="s") move(0,1);
+  if (k==="arrowleft"||k==="a") move(-1,0);
+  if (k==="arrowright"||k==="d") move(1,0);
+});
+
+setupLevel();
+})();
+</script>
+</body>
+</html>
