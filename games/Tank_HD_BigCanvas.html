@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Tank SOLO HD</title>
+<style>
+body { margin:0; background:#111; overflow:hidden; color:white; font-family:Arial;}
+canvas { display:block; margin:auto; background:#222; }
+
+#shopBtn {
+position:absolute; top:15px; right:15px;
+padding:10px 16px;
+background:#444; color:white;
+border:none; cursor:pointer;
+font-size:16px;
+}
+
+</style>
+</head>
+<body>
+
+<button id="shopBtn">SHOP</button>
+<canvas id="game" width="1200" height="700"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let skins = ["green","blue","purple","orange"];
+let currentSkin = 0;
+
+let player = { x:600, y:600, angle:0, hp:12, rapid:0 };
+let score = 0;
+let level = 1;
+let coins = 0;
+let gameOver = false;
+let shopOpen = false;
+
+let bots = [];
+let bullets = [];
+
+document.getElementById("shopBtn").onclick = () => shopOpen = !shopOpen;
+
+function spawnLevel(){
+    bots = [];
+    for(let i=0;i<level+2;i++){
+        bots.push({
+            x:Math.random()*1100+50,
+            y:100,
+            angle:0,
+            hp:2,
+            speed:1 + level*0.2
+        });
+    }
+}
+
+spawnLevel();
+
+let keys = {};
+document.addEventListener("keydown", e=>{
+    keys[e.key]=true;
+    if(e.code==="Space" && !shopOpen) shoot(player);
+});
+document.addEventListener("keyup", e=>keys[e.key]=false);
+
+function shoot(from){
+    let speed = player.rapid>0 ? 8 : 5;
+    bullets.push({
+        x:from.x,
+        y:from.y,
+        vx:Math.cos(from.angle)*speed,
+        vy:Math.sin(from.angle)*speed,
+        owner:from
+    });
+}
+
+function updatePlayer(){
+    if(keys["ArrowLeft"]) player.angle -= 0.05;
+    if(keys["ArrowRight"]) player.angle += 0.05;
+    if(keys["ArrowUp"]){
+        player.x += Math.cos(player.angle)*3;
+        player.y += Math.sin(player.angle)*3;
+    }
+    if(player.rapid>0) player.rapid--;
+}
+
+function updateBots(){
+    bots.forEach(bot=>{
+        let dx = player.x - bot.x;
+        let dy = player.y - bot.y;
+        bot.angle = Math.atan2(dy, dx);
+        bot.x += Math.cos(bot.angle)*bot.speed;
+        bot.y += Math.sin(bot.angle)*bot.speed;
+        if(Math.random() < 0.02){
+            shoot(bot);
+        }
+    });
+}
+
+function updateBullets(){
+    bullets.forEach((b,i)=>{
+        b.x += b.vx;
+        b.y += b.vy;
+
+        bots.forEach((bot,j)=>{
+            if(b.owner === player){
+                let dx = b.x - bot.x;
+                let dy = b.y - bot.y;
+                if(Math.sqrt(dx*dx+dy*dy) < 25){
+                    bot.hp--;
+                    bullets.splice(i,1);
+                    if(bot.hp<=0){
+                        bots.splice(j,1);
+                        score+=100;
+                        coins+=20;
+                    }
+                }
+            }
+        });
+
+        if(b.owner !== player){
+            let dx = b.x - player.x;
+            let dy = b.y - player.y;
+            if(Math.sqrt(dx*dx+dy*dy) < 25){
+                player.hp--;
+                bullets.splice(i,1);
+                if(player.hp<=0) gameOver=true;
+            }
+        }
+    });
+
+    if(bots.length==0){
+        level++;
+        spawnLevel();
+    }
+}
+
+function drawTank(t){
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle);
+    ctx.fillStyle=skins[currentSkin];
+    ctx.fillRect(-20,-20,40,40);
+    ctx.fillStyle="black";
+    ctx.fillRect(0,-4,28,8);
+    ctx.restore();
+}
+
+function drawShop(){
+    ctx.fillStyle="rgba(0,0,0,0.9)";
+    ctx.fillRect(200,150,800,400);
+
+    ctx.fillStyle="white";
+    ctx.font="30px Arial";
+    ctx.fillText("SHOP",540,200);
+
+    ctx.font="20px Arial";
+    ctx.fillText("1 = +5 HP (50 coins)",350,270);
+    ctx.fillText("2 = Rapid Fire (80 coins)",350,320);
+    ctx.fillText("3 = Blue Skin (100 coins)",350,370);
+    ctx.fillText("4 = Purple Skin (150 coins)",350,420);
+    ctx.fillText("5 = Orange Skin (200 coins)",350,470);
+}
+
+document.addEventListener("keydown", e=>{
+    if(shopOpen){
+        if(e.key==="1" && coins>=50){ coins-=50; player.hp+=5; }
+        if(e.key==="2" && coins>=80){ coins-=80; player.rapid=500; }
+        if(e.key==="3" && coins>=100){ coins-=100; currentSkin=1; }
+        if(e.key==="4" && coins>=150){ coins-=150; currentSkin=2; }
+        if(e.key==="5" && coins>=200){ coins-=200; currentSkin=3; }
+    }
+});
+
+function draw(){
+    ctx.clearRect(0,0,1200,700);
+
+    drawTank(player);
+    bots.forEach(bot=>{
+        ctx.fillStyle="red";
+        ctx.fillRect(bot.x-20,bot.y-20,40,40);
+    });
+
+    ctx.fillStyle="yellow";
+    bullets.forEach(b=>{
+        ctx.beginPath();
+        ctx.arc(b.x,b.y,5,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    ctx.fillStyle="white";
+    ctx.fillText("HP: "+player.hp,20,30);
+    ctx.fillText("Score: "+score,20,60);
+    ctx.fillText("Coins: "+coins,20,90);
+    ctx.fillText("Level: "+level,20,120);
+
+    if(shopOpen) drawShop();
+
+    if(gameOver){
+        ctx.font="50px Arial";
+        ctx.fillText("GAME OVER",450,350);
+    }
+}
+
+function loop(){
+    if(!gameOver && !shopOpen){
+        updatePlayer();
+        updateBots();
+        updateBullets();
+    }
+    draw();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
